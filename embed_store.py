@@ -1,36 +1,45 @@
-from sentence_transformers import SentenceTransformer
+import os
 import chromadb
+from sentence_transformers import SentenceTransformer
 
-def build_vector_store(chunks, persist_dir="./chroma_store", collection_name="pdf_docs"):
+CHROMA_PATH = "chroma_store"
+COLLECTION_NAME = "pdf_chunks"
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+
+embed_model = SentenceTransformer(EMBED_MODEL_NAME)
+chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+
+
+def store_chunks(chunks: list, source_filename: str):
     """
-    chunks: list of {"page": int, "text": str} dicts from chunk_all_pages()
-    Embeds each chunk and stores it in a persistent ChromaDB collection.
+    Embeds and stores chunks in ChromaDB, tagging each one with
+    the PDF filename it came from (source_filename) so we can
+    filter by document later.
+
+    chunks: [{"page": n, "text": "..."}, ...]  (from chunk.py)
+    source_filename: e.g. "x.pdf"
     """
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    texts = [c["text"] for c in chunks]
 
-    texts = [chunk["text"] for chunk in chunks]
-    embeddings = model.encode(texts).tolist()  # ChromaDB expects plain lists, not numpy arrays
-    ids = [f"chunk_{i}" for i in range(len(chunks))]
-    metadatas = [{"page": chunk["page"]} for chunk in chunks]
+    # Batch-embed all chunk texts at once (faster than one-by-one)
+    embeddings = embed_model.encode(texts).tolist()
 
-    client = chromadb.PersistentClient(path=persist_dir)
-    collection = client.get_or_create_collection(collection_name)
+    # Build unique IDs that include the source, so chunk IDs never collide
+    # across different PDFs (e.g. "x.pdf" and "y.pdf" both having a "chunk_0")
+    ids = [f"{source_filename}_chunk_{i}" for i in range(len(chunks))]
+
+    # Metadata now carries BOTH page number and source filename
+    metadatas = [
+        {"page": c["page"], "source": source_filename}
+        for c in chunks
+    ]
 
     collection.add(
-        documents=texts,
-        embeddings=embeddings,
         ids=ids,
-        metadatas=metadatas
+        embeddings=embeddings,
+        documents=texts,
+        metadatas=metadatas,
     )
 
-    return collection
-
-
-if __name__ == "__main__":
-    from extract import extract_pages
-    from chunk import chunk_all_pages
-
-    pages = extract_pages("sample.pdf")
-    chunks = chunk_all_pages(pages)
-    collection = build_vector_store(chunks)
-    print(f"Stored {collection.count()} chunks in ChromaDB.")
+    print(f"Stored {len(chunks)} chunks from '{source_filename}'.")

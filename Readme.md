@@ -204,6 +204,3 @@ This is Project 1 of a 5-project portfolio series:
 
 ---
 
-## License
-
-MIT

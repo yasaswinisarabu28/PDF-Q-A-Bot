@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import pymupdf
 
 def extract_pages(pdf_path):
     """
@@ -6,13 +6,13 @@ def extract_pages(pdf_path):
     Returns a list of (page_number, text) tuples — skips pages with no
     extractable text (e.g., scanned image-only pages).
     """
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     pages = []
 
     for page_num, page in enumerate(doc, start=1):
         text = page.get_text().strip()
 
-        if text: 
+        if text:
             pages.append((page_num, text))
         else:
             print(f"Warning: page {page_num} has no extractable text (possibly scanned/image-only). Skipping.")
@@ -22,7 +22,7 @@ def extract_pages(pdf_path):
 
 
 if __name__ == "__main__":
-    pdf_path = "sample.pdf" 
+    pdf_path = "sample.pdf"
     result = extract_pages(pdf_path)
     print(f"Extracted text from {len(result)} pages.")
-    print(result[0])  
+    print(result[0])

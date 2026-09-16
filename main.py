@@ -2,8 +2,8 @@ import os
 import tkinter as tk
 from tkinter import filedialog
 
-from extract import extract_text
-from chunk import chunk_text
+from extract import extract_pages
+from chunk import chunk_all_pages
 from embed_store import store_chunks, collection
 from query import ask_question
 
@@ -49,8 +49,8 @@ def add_new_pdf():
     filename = os.path.basename(file_path)  # e.g. "z.pdf" from the full path
     print(f"Processing '{filename}'...")
 
-    pages = extract_text(file_path)          # from extract.py
-    chunks = chunk_text(pages)                # from chunk.py
+    pages = extract_pages(file_path)          # from extract.py
+    chunks = chunk_all_pages(pages)                # from chunk.py
     store_chunks(chunks, source_filename=filename)  # from embed_store.py
 
     print(f"'{filename}' added and ready to query.")

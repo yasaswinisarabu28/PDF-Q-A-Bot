@@ -8,12 +8,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Configuration ---
-CHROMA_PATH = "chroma_store"          # must match the path used in embed_store.py
-COLLECTION_NAME = "pdf_chunks"        # must match the collection name in embed_store.py
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2" # must match the model used to embed the chunks
-TOP_K = 4                              # how many chunks to retrieve per question
+CHROMA_PATH = "chroma_store"
+COLLECTION_NAME = "pdf_chunks"
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+TOP_K = 4
 
-# --- Initialize once (not inside the loop, so we don't reload models every question) ---
+# --- Initialize once ---
 embed_model = SentenceTransformer(EMBED_MODEL_NAME)
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
@@ -28,13 +28,12 @@ def retrieve_chunks(question: str, source_filename: str = None, top_k: int = TOP
     """
     question_embedding = embed_model.encode(question).tolist()
 
-    # 'where' is Chroma's filter syntax — only applied if source_filename given
     query_filter = {"source": source_filename} if source_filename else None
 
     results = collection.query(
         query_embeddings=[question_embedding],
         n_results=top_k,
-        where=query_filter,   # None means "no filter, search everything"
+        where=query_filter
     )
 
     documents = results.get("documents", [[]])[0]
@@ -54,18 +53,13 @@ def retrieve_chunks(question: str, source_filename: str = None, top_k: int = TOP
 def build_prompt(question: str, chunks: list, source_filename: str = None):
     """
     Builds the prompt sent to the LLM.
-    - If chunks were retrieved: answer strictly from them, cite pages
-      (and cite source filenames too, if searching across multiple PDFs).
-    - If chunks is empty: fall back to general knowledge, but say so clearly.
     """
     if chunks:
         if source_filename:
-            # Scoped to one PDF — page number alone is enough context
             context_text = "\n\n".join(
                 f"[Page {c['page']}]: {c['text']}" for c in chunks
             )
         else:
-            # Searching across all PDFs — label each excerpt with its source too
             context_text = "\n\n".join(
                 f"[{c['source']} - Page {c['page']}]: {c['text']}" for c in chunks
             )
@@ -75,17 +69,26 @@ def build_prompt(question: str, chunks: list, source_filename: str = None):
             "Use ONLY the excerpts provided below to answer the question. "
             "Always cite the page number(s) you used, like (Page 3). "
             "If multiple documents are shown, mention which document each fact came from. "
-            "If the excerpts don't fully answer the question, say what's missing."
+            "If the excerpts don't fully answer the question, say what's missing.\n\n"
+            "Match the length of your answer to what's actually being asked: "
+            "for simple factual questions, answer in 2-4 sentences with no headers. "
+            "Only use structure (short bullet points or brief sections) when the "
+            "question explicitly asks for a comparison, evaluation, or a list of "
+            "multiple distinct items. Never restate the question, never add a "
+            "'Conclusion' section, and never list what the documents 'do not confirm' "
+            "unless directly asked to assess something."
         )
+
         user_prompt = f"Excerpts:\n{context_text}\n\nQuestion: {question}"
     else:
-        # No relevant chunks found — fall back to general knowledge
         system_prompt = (
             "No relevant excerpts were found in the document(s) for this question. "
-            "Answer using your own general knowledge instead, but start your "
-            "answer by clearly stating: 'I couldn't find this in the document, "
-            "so here's a general answer:'"
+            "Answer using your own general knowledge instead, but start your answer "
+            "by clearly stating: 'I couldn't find this in the document, so here's a "
+            "general answer:' Keep the rest of your answer concise — 2-4 sentences "
+            "unless the question specifically calls for more detail."
         )
+
         user_prompt = f"Question: {question}"
 
     return system_prompt, user_prompt
@@ -94,29 +97,33 @@ def build_prompt(question: str, chunks: list, source_filename: str = None):
 def ask_question(question: str, source_filename: str = None):
     """
     Full pipeline: retrieve -> build prompt -> call Groq -> return answer.
-    source_filename: pass a specific PDF's filename to scope the search,
-    or None to search across all stored PDFs.
     """
     chunks = retrieve_chunks(question, source_filename=source_filename)
-    system_prompt, user_prompt = build_prompt(question, chunks, source_filename=source_filename)
+    system_prompt, user_prompt = build_prompt(
+        question,
+        chunks,
+        source_filename=source_filename
+    )
 
     response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.2,  # low temperature -> grounded, not "creative"
+        temperature=0.2
     )
 
     return response.choices[0].message.content
 
 
-# --- Simple standalone test loop (main.py replaces this with the full menu) ---
+# --- Simple standalone test loop ---
 if __name__ == "__main__":
     while True:
         q = input("\nAsk a question about the PDF (or 'exit'): ")
+
         if q.lower() == "exit":
             break
+
         answer = ask_question(q)
         print("\nAnswer:\n", answer)
